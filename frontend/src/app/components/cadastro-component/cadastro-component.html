@@ -1,0 +1,132 @@
+<div class="flex h-screen overflow-hidden relative">
+
+  <!-- LADO ESQUERDO - IMAGEM (EXATAMENTE IGUAL AO TEU) -->
+  <div 
+    class="hidden lg:block lg:w-1/2 fixed inset-y-0 left-0 bg-cover bg-center bg-no-repeat"
+    style="background-image: url('assets/images/cadastro.png');"
+  >
+    <!-- Camada escura opcional -->
+    <div class="absolute inset-0 bg-black opacity-20"></div>
+  </div>
+
+  <!-- LADO DIREITO - FORMULÁRIO (SÓ ADICIONEI ml-auto E bg-white) -->
+  <div class="w-full lg:w-1/2 lg:ml-auto h-full flex items-center justify-center px-6 bg-white">
+
+    <div class="w-full max-w-md">
+
+      <!-- LOGO -->
+      <div class="flex justify-center mb-6">
+        <img
+          src="assets/images/logo.png"
+          alt="Engage"
+          class="h-10"
+        />
+      </div>
+
+      <!-- TÍTULO -->
+      <h2 class="text-2xl font-semibold text-gray-800 text-center">
+        Criar conta
+      </h2>
+
+      <!-- SUBTEXTO -->
+      <p class="text-sm text-gray-600 text-center mt-2">
+        Se você já tem uma conta na plataforma Engage<br />
+        você pode
+        <a (click)="goToLogin()" class="text-purple-600 hover:underline font-medium cursor-pointer">
+          Entrar aqui !
+        </a>
+      </p>
+
+      <!-- MENSAGENS -->
+      <div *ngIf="errorMessage" class="mt-4 p-3 bg-red-100 border border-red-400 text-red-700 rounded-lg text-sm text-center">
+        {{ errorMessage }}
+      </div>
+
+      <div *ngIf="successMessage" class="mt-4 p-3 bg-green-100 border border-green-400 text-green-700 rounded-lg text-sm text-center">
+        {{ successMessage }}
+      </div>
+
+      <!-- FORMULÁRIO -->
+      <form (ngSubmit)="onSubmit()" class="mt-6 space-y-4">
+
+        <!-- NOME -->
+        <div>
+          <label class="block text-sm text-gray-700 mb-1">
+            Nome completo
+          </label>
+          <input
+            type="text"
+            [(ngModel)]="user.nome"
+            name="nome"
+            placeholder="Digite seu nome completo"
+            [disabled]="isLoading"
+            class="w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 disabled:bg-gray-100 disabled:cursor-not-allowed"
+          />
+        </div>
+
+        <!-- EMAIL -->
+        <div>
+          <label class="block text-sm text-gray-700 mb-1">
+            Email
+          </label>
+          <input
+            type="email"
+            [(ngModel)]="user.email"
+            name="email"
+            placeholder="Digite seu email"
+            [disabled]="isLoading"
+            class="w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 disabled:bg-gray-100 disabled:cursor-not-allowed"
+          />
+        </div>
+
+        <!-- SENHA -->
+        <div>
+          <label class="block text-sm text-gray-700 mb-1">
+            Palavra-passe
+          </label>
+          <input
+            type="password"
+            [(ngModel)]="user.senha"
+            name="senha"
+            placeholder="Digite sua palavra-passe"
+            [disabled]="isLoading"
+            class="w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 disabled:bg-gray-100 disabled:cursor-not-allowed"
+          />
+        </div>
+
+        <!-- CONFIRMAR SENHA -->
+        <div>
+          <label class="block text-sm text-gray-700 mb-1">
+            Confirmar palavra-passe
+          </label>
+          <input
+            type="password"
+            [(ngModel)]="user.confirmar_senha"
+            name="confirmar_senha"
+            placeholder="Confirme sua palavra-passe"
+            [disabled]="isLoading"
+            class="w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 disabled:bg-gray-100 disabled:cursor-not-allowed"
+          />
+        </div>
+
+        <!-- BOTÃO -->
+        <button
+          type="submit"
+          [disabled]="isLoading"
+          class="w-full bg-purple-600 hover:bg-purple-700 text-white py-2 rounded-lg font-medium transition disabled:bg-gray-400 disabled:cursor-not-allowed flex items-center justify-center"
+        >
+          <span *ngIf="!isLoading">Criar conta</span>
+          <span *ngIf="isLoading" class="flex items-center">
+            <svg class="animate-spin h-5 w-5 mr-2" viewBox="0 0 24 24">
+              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none"></circle>
+              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+            Criando conta...
+          </span>
+        </button>
+
+      </form>
+
+    </div>
+  </div>
+</div>
