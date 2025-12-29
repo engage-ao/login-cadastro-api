@@ -1,17 +1,22 @@
 import { CommonModule } from '@angular/common';
-import { Component } from '@angular/core';
+import { Component, OnInit, OnDestroy } from '@angular/core';
 import { FormsModule } from '@angular/forms';
-import { ApiService } from '../../core/services/api-service';
-import { Register } from '../../core/models/api-module/api-module-module';
 import { Router } from '@angular/router';
+import { ApiService } from '../../core/services/api-service';
+import { ValidationService, SenhaRequisitos } from '../../core/services/validation.service';
+import { Register, ApiResponse } from '../../core/models/api-module/api-module-module';
+import { environment } from '../../../environments/environment';
+
+declare const google: any;
 
 @Component({
-  selector: 'app-cadastro-component',
+  selector: 'app-cadastro',
+  standalone: true,
   imports: [CommonModule, FormsModule],
   templateUrl: './cadastro-component.html',
   styleUrl: './cadastro-component.scss',
 })
-export class CadastroComponent {
+export class CadastroComponent implements OnInit, OnDestroy {
   user: Register = {
     nome: '',
     email: '',
@@ -22,112 +27,209 @@ export class CadastroComponent {
   errorMessage: string = '';
   successMessage: string = '';
   isLoading: boolean = false;
+  mostrarSenha: boolean = false;
+  mostrarConfirmarSenha: boolean = false;
+  
+  senhaRequisitos: SenhaRequisitos = {
+    minLength: false,
+    hasUpper: false,
+    hasLower: false,
+    hasNumber: false
+  };
 
-  constructor(private apiservice: ApiService, private router: Router) {}
+  private redirectTimeout?: number;
 
-  goToLogin(): void {
-    this.router.navigate(['/login']);
+  constructor(
+    private apiService: ApiService,
+    private validationService: ValidationService,
+    private router: Router
+  ) {}
+
+  ngOnInit(): void {
+    this.loadGoogleScript();
   }
 
-  // Validação de email
-  validarEmail(email: string): boolean {
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    return emailRegex.test(email);
-  }
-
-  // Validação de senha forte (opcional, mas recomendado)
-  validarSenha(senha: string): { valida: boolean; mensagem: string } {
-    if (senha.length < 6) {
-      return { valida: false, mensagem: 'A senha deve ter no mínimo 6 caracteres' };
+  ngOnDestroy(): void {
+    if (this.redirectTimeout) {
+      clearTimeout(this.redirectTimeout);
     }
-    return { valida: true, mensagem: '' };
   }
 
-  onSubmit(): void {
-    // Limpa mensagens anteriores
+
+
+  loadGoogleScript(): void {
+    const script = document.createElement('script');
+    script.src = 'https://accounts.google.com/gsi/client';
+    script.async = true;
+    script.defer = true;
+    document.head.appendChild(script);
+
+    script.onload = () => {
+      this.initializeGoogleSignIn();
+    };
+  }
+
+  initializeGoogleSignIn(): void {
+    if (typeof google !== 'undefined') {
+      google.accounts.id.initialize({
+        client_id: environment.googleClientId,
+        callback: (response: any) => this.handleGoogleSignup(response)
+      });
+
+      google.accounts.id.renderButton(
+        document.getElementById('googleSignUpButton'),
+        { 
+          theme: 'outline', 
+          size: 'large',
+          width: 350,
+          text: 'signup_with',
+          locale: 'pt-BR'
+        }
+      );
+    }
+  }
+
+  handleGoogleSignup(response: any): void {
+    this.isLoading = true;
     this.errorMessage = '';
     this.successMessage = '';
 
-    // Validação 1: Nome obrigatório
+    this.apiService.GoogleLogin({ token: response.credential }).subscribe({
+      next: (resposta: ApiResponse) => {
+        this.isLoading = false;
+
+        if (resposta.success) {
+         
+          if (resposta.is_new_user) {
+            this.successMessage = 'Conta criada com sucesso! Bem-vindo ao sistema';
+          } else {
+            this.successMessage = 'Login realizado com sucesso!';
+          }
+          
+          this.errorMessage = '';
+
+        
+          if (resposta.access_token) {
+            localStorage.setItem('access_token', resposta.access_token);
+            
+            if (resposta.usuario) {
+              localStorage.setItem('user', JSON.stringify(resposta.usuario));
+            }
+          }
+
+          
+          this.redirectTimeout = window.setTimeout(() => {
+            this.router.navigate(['/dashboard']);
+          }, 1500);
+        } else {
+          this.errorMessage = resposta.error;
+        }
+      },
+      error: (error) => {
+        this.isLoading = false;
+
+        
+        if (error.status === 409) {
+          const errorMsg = error.error?.error || '';
+          if (errorMsg.includes('normal') || errorMsg.includes('cadastro normal')) {
+            this.errorMessage = 'Este email já possui cadastro normal. Use login tradicional';
+          } else {
+            this.errorMessage = 'Este email já está cadastrado';
+          }
+        } else if (error.status === 401) {
+          this.errorMessage = error.error?.error || 'Token do Google inválido';
+        } else if (error.status === 0) {
+          this.errorMessage = 'Não foi possível conectar ao servidor';
+        } else {
+          this.errorMessage = error.error?.error || 'Erro ao cadastrar com Google';
+        }
+      }
+    });
+  }
+
+ 
+
+  onSubmit(): void {
+    this.errorMessage = '';
+    this.successMessage = '';
+
+    //  Validação 1: Nome obrigatório
     if (!this.user.nome || this.user.nome.trim() === '') {
       this.errorMessage = 'Nome é obrigatório';
       return;
     }
 
-    // Validação 2: Nome muito curto
+    //  Validação 2: Nome mínimo 3 caracteres
     if (this.user.nome.trim().length < 3) {
       this.errorMessage = 'Nome deve ter no mínimo 3 caracteres';
       return;
     }
 
-    // Validação 3: Email obrigatório
+    //  Validação 3: Email obrigatório
     if (!this.user.email || this.user.email.trim() === '') {
       this.errorMessage = 'Email é obrigatório';
       return;
     }
 
-    // Validação 4: Email válido
-    if (!this.validarEmail(this.user.email)) {
+    //  Validação 4: Email válido
+    if (!this.validationService.validarEmail(this.user.email)) {
       this.errorMessage = 'Email inválido. Deve conter @ e domínio válido';
       return;
     }
 
-    // Validação 5: Senha obrigatória
+    //  Validação 5: Senha obrigatória
     if (!this.user.senha) {
       this.errorMessage = 'Senha é obrigatória';
       return;
     }
 
-    // Validação 6: Senha forte
-    const validacaoSenha = this.validarSenha(this.user.senha);
-    if (!validacaoSenha.valida) {
-      this.errorMessage = validacaoSenha.mensagem;
+    //  Validação 6: Senha forte (6+ chars, maiúscula, minúscula, número)
+    if (!this.senhaForte()) {
+      this.errorMessage = 'A senha não atende aos requisitos mínimos';
       return;
     }
 
-    // Validação 7: Confirmar senha obrigatória
+    //  Validação 7: Confirmação obrigatória
     if (!this.user.confirmar_senha) {
       this.errorMessage = 'Confirmação de senha é obrigatória';
       return;
     }
 
-    // Validação 8: Senhas conferem
+    //  Validação 8: Senhas conferem
     if (this.user.senha !== this.user.confirmar_senha) {
       this.errorMessage = 'As senhas não conferem';
       return;
     }
 
-    // Mostra loading
     this.isLoading = true;
 
-    // Log para debug - verificar se os dados estão corretos
-    console.log('Dados sendo enviados para o backend:', {
-      nome: this.user.nome,
-      email: this.user.email,
-      senha: '***', // Não mostra a senha no console por segurança
-      confirmar_senha: '***'
-    });
-
-    // Envia para o backend
-    this.apiservice.Cadastro(this.user).subscribe({
-      next: (resposta) => {
+    //  Chama API de cadastro
+    this.apiService.Cadastro(this.user).subscribe({
+      next: (resposta: ApiResponse) => {
         this.isLoading = false;
-        console.log('Resposta do backend:', resposta);
         
         if (resposta.success) {
           this.successMessage = resposta.message;
           this.errorMessage = '';
           
-          // Limpa o formulário
+          
           this.user = {
             nome: '',
             email: '',
             senha: '',
             confirmar_senha: '',
           };
+
           
-          // Redireciona para login após 2 segundos
-          setTimeout(() => {
+          this.senhaRequisitos = {
+            minLength: false,
+            hasUpper: false,
+            hasLower: false,
+            hasNumber: false
+          };
+          
+          
+          this.redirectTimeout = window.setTimeout(() => {
             this.router.navigate(['/login']);
           }, 2000);
         } else {
@@ -137,23 +239,46 @@ export class CadastroComponent {
       },
       error: (error) => {
         this.isLoading = false;
-        console.error('Erro na requisição:', error);
         
-        // Tratamento de erros específicos do backend
+        
         if (error.status === 409) {
-          this.errorMessage = 'Este email já está cadastrado';
+          this.errorMessage = error.error?.error || 'Este email já está cadastrado';
         } else if (error.status === 400) {
+          
           this.errorMessage = error.error?.error || 'Dados inválidos. Verifique os campos';
         } else if (error.status === 500) {
           this.errorMessage = 'Erro no servidor. Tente novamente mais tarde';
         } else if (error.status === 0) {
+         
           this.errorMessage = 'Não foi possível conectar ao servidor. Verifique sua conexão';
         } else {
-          this.errorMessage = 'Erro ao realizar o cadastro. Tente novamente';
+          this.errorMessage = error.error?.error || 'Erro ao realizar o cadastro. Tente novamente';
         }
         
         this.successMessage = '';
       }
     });
+  }
+
+
+
+  toggleMostrarSenha(): void {
+    this.mostrarSenha = !this.mostrarSenha;
+  }
+
+  toggleMostrarConfirmarSenha(): void {
+    this.mostrarConfirmarSenha = !this.mostrarConfirmarSenha;
+  }
+
+  validarSenhaRequisitos(): void {
+    this.senhaRequisitos = this.validationService.validarSenha(this.user.senha);
+  }
+
+  senhaForte(): boolean {
+    return this.validationService.senhaForte(this.user.senha);
+  }
+
+  goToLogin(): void {
+    this.router.navigate(['/login']);
   }
 }

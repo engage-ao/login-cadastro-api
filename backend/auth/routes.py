@@ -1,15 +1,16 @@
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, request, jsonify, redirect, url_for, current_app
 from flask_jwt_extended import create_access_token
 from datetime import datetime, timedelta
+from google.oauth2 import id_token
+from google.auth.transport import requests as google_requests
+import requests as http_requests
 
 from models import User
 from database import db
-from auth.utils import generate_reset_token
-
+from auth.utils import generate_reset_token, send_reset_email
+from config import Config
 
 auth_bp = Blueprint("auth", __name__)
-
-
 
 @auth_bp.route("/cadastrar", methods=["POST"])
 def cadastro():
@@ -37,18 +38,17 @@ def cadastro():
                 "error": "Email já cadastrado"
             }), 409
         
-        # Cria novo usuário
+        
         novo_usuario = User(
             nome=data["nome"],
-            email=data["email"]
+            email=data["email"],
+            is_google_user = False
         )
         novo_usuario.set_senha(data["senha"])
         
-        # Salva no banco
         db.session.add(novo_usuario)
         db.session.commit()
         
-        # Retorna sucesso
         return jsonify({
             "success": True,
             "message": "Usuário criado com sucesso",
@@ -56,17 +56,12 @@ def cadastro():
         }), 201
         
     except Exception as e:
-        # Se der qualquer erro, desfaz alterações
         db.session.rollback()
         return jsonify({
             "success": False,
             "error": f"Erro ao cadastrar: {str(e)}"
         }), 500
 
-
-# ========================================
-# ROTA 2: LOGIN
-# ========================================
 @auth_bp.route("/login", methods=["POST"])
 def login():
     try:
@@ -89,13 +84,19 @@ def login():
                 "error": "Email ou senha inválidos"
             }), 401
         
+        # Verifica se é usuário Google
+        if user.is_google_user:
+            return jsonify({
+                "success": False,
+                "error": "Esta conta usa Google. Use 'Entrar com Google'"
+            }), 401
+        
         # Cria token JWT
         access_token = create_access_token(
             identity=user.id,
-            expires_delta=timedelta(hours=1)
+            expires_delta=timedelta(hours=24)
         )
         
-        # Retorna sucesso
         return jsonify({
             "success": True,
             "message": "Login realizado com sucesso",
@@ -109,57 +110,246 @@ def login():
             "error": f"Erro ao fazer login: {str(e)}"
         }), 500
 
+@auth_bp.route("/auth/google", methods=["GET"])
+def google_login():
+    """Redireciona para autenticação Google"""
+    auth_url = (
+        f"https://accounts.google.com/o/oauth2/v2/auth?"
+        f"client_id={Config.GOOGLE_CLIENT_ID}&"
+        f"redirect_uri={Config.GOOGLE_REDIRECT_URI}&"
+        f"response_type=code&"
+        f"scope=openid email profile&"
+        f"access_type=offline"
+    )
+    return redirect(auth_url)
 
-# ========================================
-# ROTA 3: ESQUECEU SENHA
-# ========================================
+@auth_bp.route("/auth/google/callback", methods=["GET"])
+def google_callback():
+    """Processa retorno da autenticação Google"""
+    try:
+        
+        code = request.args.get("code")
+        
+        if not code:
+            return jsonify({
+                "success": False,
+                "error": "Código de autorização não fornecido"
+            }), 400
+        
+        
+        token_url = "https://oauth2.googleapis.com/token"
+        token_data = {
+            "code": code,
+            "client_id": Config.GOOGLE_CLIENT_ID,
+            "client_secret": Config.GOOGLE_CLIENT_SECRET,
+            "redirect_uri": Config.GOOGLE_REDIRECT_URI,
+            "grant_type": "authorization_code"
+        }
+        
+        token_response = http_requests.post(token_url, data=token_data)
+        token_json = token_response.json()
+        
+        if "error" in token_json:
+            return jsonify({
+                "success": False,
+                "error": f"Erro ao obter token: {token_json['error']}"
+            }), 400
+        
+        
+        id_info = id_token.verify_oauth2_token(
+            token_json["id_token"],
+            google_requests.Request(),
+            Config.GOOGLE_CLIENT_ID
+        )
+        
+        
+        google_id = id_info["sub"]
+        email = id_info["email"]
+        nome = id_info.get("name", email.split("@")[0])
+        picture = id_info.get("picture", "")
+        
+        
+        user = User.query.filter_by(email=email).first()
+        
+        is_new_user = False 
+        
+        if user:
+            if not user.is_google_user:
+                return redirect(
+                    f"http://localhost:4200/login?error=email_cadastrado_normal"
+                )
+            
+            user.google_id = google_id
+            user.nome = nome
+            user.picture = picture
+            db.session.commit()
+        else:
+            is_new_user = True
+            user = User(
+                nome=nome,
+                email=email,
+                is_google_user=True,
+                google_id=google_id,
+                picture=picture
+            )
+            db.session.add(user)
+            db.session.commit()
+        
+        
+        access_token = create_access_token(
+            identity=user.id,
+            expires_delta=timedelta(hours=24)
+        )
+        
+        if is_new_user:
+            return redirect(
+                f"http://localhost:4200/dashboard?token={access_token}&user={user.id}&new_user=true"
+            )
+        else:
+            return redirect(
+                f"http://localhost:4200/dashboard?token={access_token}&user={user.id}"
+            )
+        
+    except Exception as e:
+        print(f"Erro no callback Google: {str(e)}")
+        return redirect(
+            f"http://localhost:4200/login?error=google_auth_failed"
+        )
+
+@auth_bp.route("/google-login", methods=["POST"])
+def google_login_token():
+    """Login com token do Google (para uso com biblioteca JavaScript)"""
+    try:
+        data = request.get_json()
+        token = data.get("token")
+        
+        if not token:
+            return jsonify({
+                "success": False,
+                "error": "Token do Google é obrigatório"
+            }), 400
+        
+        # Verifica token do Google
+        try:
+            idinfo = id_token.verify_oauth2_token(
+                token,
+                google_requests.Request(),
+                Config.GOOGLE_CLIENT_ID
+            )
+            
+            google_id = idinfo["sub"]
+            email = idinfo["email"]
+            nome = idinfo.get("name", email.split("@")[0])
+            picture = idinfo.get("picture", "")
+            
+        except ValueError as e:
+            return jsonify({
+                "success": False,
+                "error": "Token do Google inválido"
+            }), 401
+        
+        user = User.query.filter_by(email=email).first()
+        
+        is_new_user = False 
+        
+        if user:
+            if not user.is_google_user:
+                return jsonify({
+                    "success": False,
+                    "error": "Este email já possui cadastro normal. Use login tradicional"
+                }), 409
+            
+            user.google_id = google_id
+            user.nome = nome
+            user.picture = picture
+            db.session.commit()
+        else:
+            is_new_user = True
+            user = User(
+                nome=nome,
+                email=email,
+                is_google_user=True,
+                google_id=google_id,
+                picture=picture
+            )
+            db.session.add(user)
+            db.session.commit()
+        
+        access_token = create_access_token(
+            identity=user.id,
+            expires_delta=timedelta(hours=24)
+        )
+        
+        if is_new_user:
+            return jsonify({
+                "success": True,
+                "message": "Conta criada com sucesso! Bem-vindo",
+                "access_token": access_token,
+                "usuario": user.to_dict(),
+                "is_new_user": True
+            }), 200
+        else:
+            return jsonify({
+                "success": True,
+                "message": "Login com Google realizado com sucesso",
+                "access_token": access_token,
+                "usuario": user.to_dict(),
+                "is_new_user": False
+            }), 200
+        
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({
+            "success": False,
+            "error": f"Erro no login com Google: {str(e)}"
+        }), 500
+
 @auth_bp.route("/esqueceuSenha", methods=["POST"])
 def esqueceu_senha():
+    """Envia email de recuperação de senha"""
     try:
+        mail = current_app.extensions['mail']  
+        
         data = request.get_json()
         email = data.get("email")
         
-        # Validação: Email obrigatório
         if not email:
             return jsonify({
                 "success": False,
                 "error": "Email é obrigatório"
             }), 400
         
-        # Busca usuário
         user = User.query.filter_by(email=email).first()
         
-        # Segurança: não revela se email existe
         if not user:
             return jsonify({
                 "success": True,
-                "message": "Se o email existir, você receberá o link"
+                "message": "Se o email existir, você receberá o link de recuperação"
             }), 200
         
-        # Gera token
+        if user.is_google_user:
+            return jsonify({
+                "success": True,
+                "message": "Se o email existir, você receberá o link de recuperação"
+            }), 200
+        
         token, expiry = generate_reset_token()
         
-        # Guarda no banco
         user.reset_token = token
         user.reset_token_expiry = expiry
         db.session.commit()
         
-        # Simula envio de email (MVP)
-        reset_link = f"http://localhost:4200/recuperar-senha?token={token}"
-        print("\n" + "="*60)
-        print("📧 EMAIL SIMULADO - Recuperação de Senha")
-        print("="*60)
-        print(f"Para: {email}")
-        print(f"Link: {reset_link}")
-        print(f"Válido por 30 minutos")
-        print("="*60 + "\n")
+        email_sent = send_reset_email(mail, user.email, token)
         
-        # MODIFICAÇÃO: Em desenvolvimento, retorna o link também na resposta
-        # REMOVA ISSO EM PRODUÇÃO por segurança!
+        if not email_sent:
+            return jsonify({
+                "success": False,
+                "error": "Erro ao enviar email. Tente novamente"
+            }), 500
+        
         return jsonify({
             "success": True,
-            "message": "Link de recuperação enviado para o email",
-            "reset_link": reset_link  # APENAS PARA DESENVOLVIMENTO
+            "message": "Link de recuperação enviado para o email"
         }), 200
         
     except Exception as e:
@@ -169,12 +359,9 @@ def esqueceu_senha():
             "error": f"Erro ao processar solicitação: {str(e)}"
         }), 500
 
-
-# ========================================
-# ROTA 4: RECUPERAR SENHA
-# ========================================
 @auth_bp.route("/recuperarSenha", methods=["POST"])
 def recuperar_senha():
+    """Redefine senha usando token recebido por email"""
     try:
         data = request.get_json()
         
@@ -220,10 +407,8 @@ def recuperar_senha():
         user.reset_token = None
         user.reset_token_expiry = None
         
-        # Salva no banco
         db.session.commit()
         
-        # Retorna sucesso
         return jsonify({
             "success": True,
             "message": "Senha atualizada com sucesso! Faça login com a nova senha"

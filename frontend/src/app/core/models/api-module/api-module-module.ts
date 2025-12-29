@@ -1,51 +1,59 @@
 import { NgModule } from '@angular/core';
 import { CommonModule } from '@angular/common';
 
-export interface User{
+export interface User {
   id: number;
   nome: string;
   email: string;
+  is_google_user?: boolean;
+  picture?: string;
+  google_id?: string;
 }
 
-export interface Register{
+export interface Register {
   nome: string;
   email: string;
   senha: string;
   confirmar_senha: string;
 }
 
-export interface Login{
+export interface Login {
   email: string;
   senha: string;
 }
 
-export interface ForgotPassword{
-  email:string;
+export interface GoogleLoginRequest {
+  token: string;
 }
 
-export interface ResetPassword{
+export interface ForgotPassword {
+  email: string;
+}
+
+export interface ResetPassword {
   nova_senha: string;
   confirmar_senha: string;
   token: string;
 }
 
-export interface ApiResponseSuccess{
+
+export interface ApiResponseSuccess {
   success: true;
   message: string;
+  access_token?: string;
+  usuario?: User;
+  is_new_user?: boolean;
 }
 
-export interface ApiResponseError{
+export interface ApiResponseError {
   success: false;
   error: string;
 }
 
 export type ApiResponse = ApiResponseSuccess | ApiResponseError;
 
-
 @NgModule({
   declarations: [],
-  imports: [
-    CommonModule
-  ]
+  imports: [CommonModule]
 })
-export class ApiModuleModule { }
+export class ApiModuleModule {}

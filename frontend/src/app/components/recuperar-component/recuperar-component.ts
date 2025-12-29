@@ -1,133 +1,124 @@
 import { CommonModule } from '@angular/common';
-import { Component, OnInit } from '@angular/core';
+import { Component, OnInit, OnDestroy } from '@angular/core';
 import { FormsModule } from '@angular/forms';
-import { ApiService } from '../../core/services/api-service';
-import { ResetPassword } from '../../core/models/api-module/api-module-module';
 import { ActivatedRoute, Router } from '@angular/router';
+import { ApiService } from '../../core/services/api-service';
+import { ValidationService, SenhaRequisitos } from '../../core/services/validation.service';
+import { ResetPassword, ApiResponse } from '../../core/models/api-module/api-module-module';
 
 @Component({
-  selector: 'app-recuperar-component',
-  imports: [CommonModule, FormsModule],
+  selector: 'app-recuperar',
+  standalone: true,
+  imports: [FormsModule, CommonModule],
   templateUrl: './recuperar-component.html',
   styleUrl: './recuperar-component.scss',
 })
-export class RecuperarComponent implements OnInit {
-  token: string = '';
-
+export class RecuperarComponent implements OnInit, OnDestroy {
   data: ResetPassword = {
-    nova_senha: '',
-    confirmar_senha: '',
     token: '',
+    nova_senha: '',
+    confirmar_senha: ''
   };
 
   errorMessage: string = '';
   successMessage: string = '';
   isLoading: boolean = false;
-  tokenValido: boolean = true;
+  tokenInvalido: boolean = false;
+  senhaAlterada: boolean = false;
+
+  mostrarSenha: boolean = false;
+  mostrarConfirmarSenha: boolean = false;
+
+  senhaRequisitos: SenhaRequisitos = {
+    minLength: false,
+    hasUpper: false,
+    hasLower: false,
+    hasNumber: false
+  };
+
+  private redirectTimeout?: number;
 
   constructor(
+    private apiService: ApiService,
+    private validationService: ValidationService,
     private route: ActivatedRoute,
-    private apiservice: ApiService,
     private router: Router
   ) {}
 
   ngOnInit(): void {
-    // Captura o token da URL
-    this.token = this.route.snapshot.queryParamMap.get('token') || '';
+    this.route.queryParams.subscribe(params => {
+      this.data.token = params['token'] || '';
+      
+      if (!this.data.token) {
+        this.tokenInvalido = true;
+        this.errorMessage = 'Token de recuperação não encontrado';
+      }
+    });
+  }
 
-    // Verifica se o token existe
-    if (!this.token) {
-      this.tokenValido = false;
-      this.errorMessage = 'Token não encontrado. Solicite um novo link de recuperação.';
-    } else {
-      this.data.token = this.token;
-      console.log('Token capturado da URL:', this.token);
+  ngOnDestroy(): void {
+    if (this.redirectTimeout) {
+      clearTimeout(this.redirectTimeout);
     }
   }
 
-  // Validação de senha forte
-  validarSenha(senha: string): { valida: boolean; mensagem: string } {
-    if (senha.length < 6) {
-      return { valida: false, mensagem: 'A senha deve ter no mínimo 6 caracteres' };
-    }
-    return { valida: true, mensagem: '' };
+  validarSenhaRequisitos(): void {
+    this.senhaRequisitos = this.validationService.validarSenha(this.data.nova_senha);
   }
 
-  // ADICIONE ESTE MÉTODO PÚBLICO
-  voltarParaLogin(): void {
+  senhaForte(): boolean {
+    return this.validationService.senhaForte(this.data.nova_senha);
+  }
+
+  toggleMostrarSenha(): void {
+    this.mostrarSenha = !this.mostrarSenha;
+  }
+
+  toggleMostrarConfirmarSenha(): void {
+    this.mostrarConfirmarSenha = !this.mostrarConfirmarSenha;
+  }
+
+  goToLogin(): void {
     this.router.navigate(['/login']);
   }
 
   onSubmit(): void {
-    // Limpa mensagens anteriores
     this.errorMessage = '';
     this.successMessage = '';
 
-    // Validação 0: Token válido
-    if (!this.tokenValido || !this.token) {
-      this.errorMessage = 'Token inválido. Solicite um novo link de recuperação.';
+    if (!this.data.token) {
+      this.errorMessage = 'Token inválido. Solicite um novo link';
       return;
     }
 
-    // Validação 1: Nova senha obrigatória
-    if (!this.data.nova_senha || this.data.nova_senha.trim() === '') {
-      this.errorMessage = 'Nova senha é obrigatória';
+    if (!this.data.nova_senha || !this.data.confirmar_senha) {
+      this.errorMessage = 'Por favor, preencha ambas as senhas';
       return;
     }
 
-    // Validação 2: Validar força da senha
-    const validacaoSenha = this.validarSenha(this.data.nova_senha);
-    if (!validacaoSenha.valida) {
-      this.errorMessage = validacaoSenha.mensagem;
+    if (!this.senhaForte()) {
+      this.errorMessage = 'A senha não atende aos requisitos mínimos';
       return;
     }
 
-    // Validação 3: Confirmar senha obrigatória
-    if (!this.data.confirmar_senha || this.data.confirmar_senha.trim() === '') {
-      this.errorMessage = 'Confirmação de senha é obrigatória';
-      return;
-    }
-
-    // Validação 4: Senhas conferem
     if (this.data.nova_senha !== this.data.confirmar_senha) {
       this.errorMessage = 'As senhas não conferem';
       return;
     }
 
-    // Mostra loading
     this.isLoading = true;
 
-    // Log para debug
-    console.log('Dados sendo enviados para o backend:', {
-      token: this.token,
-      nova_senha: '***',
-      confirmar_senha: '***'
-    });
-
-    // Prepara os dados com o token correto
-    const dadosEnvio: ResetPassword = {
-      nova_senha: this.data.nova_senha,
-      confirmar_senha: this.data.confirmar_senha,
-      token: this.token
-    };
-
-    // Envia para o backend
-    this.apiservice.recuperar(dadosEnvio).subscribe({
-      next: (resposta) => {
+    this.apiService.recuperar(this.data).subscribe({
+      next: (resposta: ApiResponse) => {
         this.isLoading = false;
-        console.log('Resposta do backend:', resposta);
 
         if (resposta.success) {
+          this.senhaAlterada = true;
           this.successMessage = resposta.message;
           this.errorMessage = '';
-
-          // Limpa os campos
-          this.data.nova_senha = '';
-          this.data.confirmar_senha = '';
-
-          // Redireciona para login após 3 segundos
-          setTimeout(() => {
-            this.router.navigate(['/login']);
+          
+          this.redirectTimeout = window.setTimeout(() => {
+            this.goToLogin();
           }, 3000);
         } else {
           this.errorMessage = resposta.error;
@@ -136,26 +127,29 @@ export class RecuperarComponent implements OnInit {
       },
       error: (error) => {
         this.isLoading = false;
-        console.error('Erro na requisição:', error);
 
-        // Tratamento de erros específicos do backend
         if (error.status === 400) {
-          this.errorMessage = error.error?.error || 'Token inválido ou expirado. Solicite um novo link';
+          const errorMsg = error.error?.error || '';
+          
+          if (errorMsg.includes('Token inválido')) {
+            this.errorMessage = 'Link inválido. Solicite um novo link de recuperação';
+          } else if (errorMsg.includes('Token expirado')) {
+            this.errorMessage = 'Link expirado. Solicite um novo link de recuperação';
+          } else if (errorMsg.includes('não conferem')) {
+            this.errorMessage = 'As senhas não conferem';
+          } else {
+            this.errorMessage = errorMsg || 'Erro ao processar solicitação';
+          }
         } else if (error.status === 500) {
           this.errorMessage = 'Erro no servidor. Tente novamente mais tarde';
         } else if (error.status === 0) {
-          this.errorMessage = 'Não foi possível conectar ao servidor. Verifique sua conexão';
+          this.errorMessage = 'Não foi possível conectar ao servidor';
         } else {
-          this.errorMessage = 'Erro ao recuperar senha. Tente novamente';
+          this.errorMessage = 'Erro ao redefinir senha. Tente novamente';
         }
 
         this.successMessage = '';
       }
     });
-  }
-
-  // Método para solicitar novo link
-  solicitarNovoLink(): void {
-    this.router.navigate(['/esqueceu']);
   }
 }
